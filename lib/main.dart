@@ -1,4 +1,5 @@
 import 'dart:async';
+//import 'dart:html';
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -17,7 +18,67 @@ class Home extends StatefulWidget {
 }
 
 class _HomeState extends State<Home> {
+  final _toDoController = TextEditingController();
+
   List _toDoList = [];
+
+  // Mapa que acabamos de remover
+  Map<String, dynamic> _lastRemoved;
+  // Qual posicao foi removido
+  int _lastRemovedPos;
+
+  // Função chamada quando inicia o app
+  @override
+  void initState() {
+    super.initState();
+    /*
+      .then utilizado para que quando a função
+      _readData concluir será chamada a outra função
+     */
+    _readData().then((data) {
+      /*
+        _readData retorna um json e quando concluído
+        será decodificado no _toDoList
+        Utilizado o setState para atualizar a tela
+      */
+      setState(() {
+        _toDoList = json.decode(data);
+      });
+    });
+  }
+
+  void _addToDo() {
+    setState(() {
+      // Pegar texto do textfield
+      Map<String, dynamic> newToDo = Map();
+      newToDo["title"] = _toDoController.text;
+      _toDoController.text = ""; // limpar texto
+      newToDo["ok"] = false; // tarefa inicia como "nao realizada"
+      _toDoList.add(newToDo); // adiciona tarefa na lista
+      _saveData(); // Salva os dados na memória
+    });
+  }
+
+  Future<Null> _refresh() async{
+    await Future.delayed(Duration(seconds: 1));
+
+    // necessita ter dois argumentos
+    // a > b = retorna 1
+    // a == b = retorna 0
+    // a < b = numero negativo
+    _toDoList.sort((a, b){ 
+      if(a["ok"] && !b["ok"])return 1;
+      else if(!a["ok"] && b["ok"])return -1;
+      else return 0;
+    });
+
+    // Atualiza a lista
+    setState(() {
+      _saveData();
+    });
+
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,6 +97,7 @@ class _HomeState extends State<Home> {
               children: <Widget>[
                 Expanded(
                   child: TextField(
+                    controller: _toDoController,
                     decoration: InputDecoration(
                         labelText: "Nova Tarefa",
                         labelStyle: TextStyle(color: Colors.amber[800])),
@@ -45,31 +107,98 @@ class _HomeState extends State<Home> {
                   color: Colors.amber[800],
                   child: Text("ADD"),
                   textColor: Colors.black,
-                  onPressed: () {},
+                  onPressed: _addToDo,
                 )
               ],
             ),
           ),
           Expanded(
-              child: ListView.builder(
-                  // builder é um construtor que permite que construa a lista conforme for rodando
-                  // elementos "escondidos" não serão renderizados e com isso não irão
-                  // consumir recursos
-                  padding: EdgeInsets.only(top: 10.0),
-                  itemCount: _toDoList.length, // tamanho da lista
-                  itemBuilder: (context, index){
-                      return CheckboxListTile(
-                        title: Text(_toDoList[index]["title"]),
-                        value: _toDoList[index]["ok"],
-                        secondary: CircleAvatar(
-                          child: Icon(_toDoList[index]["ok"]?
-                              Icons.check: Icons.error
-                            ),
-                          ),
-                      );
-                  })),
+              child: RefreshIndicator(
+                  child: ListView.builder(
+                      // builder é um construtor que permite que construa a lista conforme for rodando
+                      // elementos "escondidos" não serão renderizados e com isso não irão
+                      // consumir recursos
+                      padding: EdgeInsets.only(top: 10.0),
+                      itemCount: _toDoList.length, // tamanho da lista
+                      itemBuilder: buildItem),
+                  onRefresh: _refresh)),
         ],
       ),
+    );
+  }
+
+  Widget buildItem(context, index) {
+    // Dismissible permite que excluimos o item
+    return Dismissible(
+      // key: String que vai definir qual dos itens foi excluido
+      // essa key deve ser diferente em cada um dos itens
+      // por isso utiliza a data agora em milissegundos
+      key: Key(DateTime.now().millisecondsSinceEpoch.toString()),
+      background: Container(
+        color: Colors.red,
+        child: Align(
+          // Parametros de Alignment:
+          // x e y devem receber a distancia para a esquerda
+          // e direita que o  item vai ficar.
+          // Valor de entre -1 a 1.
+          // Se passar 0 e 0 item fica no meio
+          alignment: Alignment(-0.9, 0.0),
+          child: Icon(Icons.delete, color: Colors.white),
+        ),
+      ),
+      direction: DismissDirection.startToEnd, // da esquerda para direita
+      child: CheckboxListTile(
+        title: Text(_toDoList[index]["title"]),
+        value: _toDoList[index]["ok"],
+        secondary: CircleAvatar(
+          backgroundColor: Colors.amber[800],
+          child: Icon(
+            _toDoList[index]["ok"] ? Icons.check : Icons.error,
+            color: Colors.black,
+          ),
+        ),
+        // Chamado quando clicado no elemento da lista:
+        onChanged: (c) {
+          setState(() {
+            // Armazena no index ok
+            _toDoList[index]["ok"] = c;
+            // Salva dados quando atualizado algum item na lista
+            _saveData();
+          });
+        },
+      ),
+      onDismissed: (direction) {
+        setState(() {
+          // Primeiramente salva o item que será removido
+          _lastRemoved = Map.from(_toDoList[index]);
+          _lastRemovedPos = index;
+          // Remove item da lista
+          _toDoList.removeAt(index);
+          // Salva lista com item removido
+          _saveData();
+
+          // snackbar informando a remoção do item
+          final snack = SnackBar(
+            content: Text("Tarefa " + _lastRemoved["title"] + " removida"),
+            action: SnackBarAction(
+                label: "Desfazer",
+                onPressed: () {
+                  setState(() {
+                    // Adiciona na posição que estava
+                    _toDoList.insert(_lastRemovedPos, _lastRemoved);
+                    _saveData();
+                  });
+                }),
+            duration: Duration(seconds: 2),
+          );
+
+          // Remove snackbar da pilha antes de mostrar a nova
+          Scaffold.of(context).removeCurrentSnackBar(); 
+
+          // Para apresentar o snackbar
+          Scaffold.of(context).showSnackBar(snack);
+        });
+      },
     );
   }
 
